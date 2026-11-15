@@ -112,6 +112,17 @@ $Fake.Ics = $null
 $s = Get-AllRows
 Check 'ics unreadable is a note, not a flag' (Row $s 'ICS').Level 'note'
 
+Write-Host '6b. Things a normal PC does that must not be flagged'
+Reset-Fake
+$Fake.Services = @('SharedAccess (process started 2026-01-01 10:00:00)')
+$Fake.Events = @((Ev 299 'connected' 'Identifying...'), (Ev 299 'connected' 'Unidentified network'), (Ev 298 'connected' 'Network'), (Ev 298 'connected' 'Identifying...'))
+$s = Get-AllRows
+Check 'SharedAccess alone is a note' (Row $s 'Services').Level 'note'
+Check 'placeholder names are not networks' (Row $s 'Switches').Level 'ok'
+$Fake.Services = @('icssvc (process started 2026-01-01 10:00:00)', 'SharedAccess (process started 2026-01-01 10:00:00)')
+$s = Get-AllRows
+Check 'icssvc is still flagged' (Row $s 'Services').Level 'warn'
+
 Write-Host '7. Switched networks right before the screenshare'
 Reset-Fake
 $Fake.Events = @((Ev 290 'connected' 'HomeWifi'), (Ev 6 'disconnected' 'HomeWifi'), (Ev 5 'connected' "Liam's iPhone"))

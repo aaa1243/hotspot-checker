@@ -29,6 +29,7 @@ Write-Host '=== 3. Run from text, the way the one-liner does ==='
 $json = Join-Path $out 'oneliner.json'
 & powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Get-Content -Raw '$tool'))) -NoGui -Json '$json' -OutDir '$out'" | Out-Host
 if (-not (Test-Path $json)) { throw 'Running from text wrote no JSON' }
-if (@(Get-Content $json -Raw | ConvertFrom-Json).Count -ne 7) { throw 'Running from text returned the wrong number of rows' }
+$rows2 = Get-Content $json -Raw | ConvertFrom-Json
+if (@($rows2).Count -ne 7) { throw "Running from text returned $(@($rows2).Count) rows, expected 7" }
 
 Write-Host 'SELF-TEST PASSED'

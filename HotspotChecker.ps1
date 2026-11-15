@@ -296,9 +296,12 @@ function Get-AllRows {
     # 4. Services behind hotspot and sharing
     $r = New-Row 'Services' 'Hotspot and sharing services' 'icssvc runs while Mobile Hotspot is on, SharedAccess runs while sharing is on'
     $running = @(Get-SharingServices)
-    if ($running.Count -gt 0) {
+    if (@($running | Where-Object { $_ -like 'icssvc*' }).Count -gt 0) {
         $r.Found = ($running -join '; '); $r.Result = 'RUNNING'; $r.Level = 'warn'
-        $r.Detail = 'These services start when a hotspot or connection sharing is turned on. If nothing above shows sharing right now, it was probably on earlier this session. Compare the start time with when they were in game.'
+        $r.Detail = 'icssvc only runs while Mobile Hotspot is on or was turned on this session. If nothing above shows sharing right now, it was probably on earlier. Compare the start time with when they were in game.'
+    } elseif ($running.Count -gt 0) {
+        $r.Found = ($running -join '; '); $r.Result = 'RUNNING'; $r.Level = 'note'
+        $r.Detail = 'SharedAccess is the connection sharing service, but Windows also starts it for Hyper-V, WSL and Docker, so on its own it means nothing. It only matters next to another flag.'
     } else { $r.Found = 'Not running' }
     $rows += [pscustomobject]$r
 
@@ -329,7 +332,7 @@ function Get-AllRows {
     $lastConnect = $null
     foreach ($e in $events) {
         if ($e.What -like '*connected' -and $e.What -notlike '*disconnected') {
-            if ($e.Name -and ($names -notcontains $e.Name)) { $names += $e.Name }
+            if ($e.Name -and ($e.Name -notmatch '^(Identifying|Unidentified network)') -and ($names -notcontains $e.Name)) { $names += $e.Name }
             $lastConnect = $e.Time
         }
     }
