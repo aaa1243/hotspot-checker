@@ -49,6 +49,8 @@ Ethernet Address: 00:00:00:00:00:00
 Sat Nov 14 08:00:05 2026 /usr/libexec/configd"
     F_SSID="HomeWifi"
     F_KNOWN=""
+    F_KNOWN_ERR=""
+    F_PREF=""
 }
 known_xml() {  # pairs of: name, joined epoch (0 = never), hotspot flag
     echo '<?xml version="1.0" encoding="UTF-8"?>'
@@ -86,6 +88,8 @@ src_leases()      { echo "$F_LEASES"; }
 src_procs()       { echo "$F_PROCS"; }
 src_wifi_info()   { printf 'Wi-Fi:\n\n      Interfaces:\n        en0:\n          Status: Connected\n          Current Network Information:\n            %s:\n              PHY Mode: 802.11ax\n          Other Local Wi-Fi Networks:\n            Neighbour:\n' "$F_SSID"; }
 src_known_xml()   { printf '%s\n' "$F_KNOWN"; }
+src_known_error() { echo "$F_KNOWN_ERR"; }
+src_preferred()   { echo "$F_PREF"; }
 
 echo "1. Normal Mac on a home router"
 reset_fake
@@ -221,6 +225,29 @@ check "wifi hidden is a note" "$(row_field Wifi LEVEL)" note
 F_WIFI_STATUS="inactive"
 run_scan
 check "wifi off" "$(row_field Wifi FOUND)" "Not on Wi-Fi"
+
+echo "12b. iPhone hotspot with the name hidden, list blocked by macOS"
+reset_fake
+F_SSID="<redacted>"
+F_ROUTES="default            172.20.10.1        UGScg                 en0"
+F_KNOWN_ERR="cat: /Library/Preferences/com.apple.wifi.known-networks.plist: Operation not permitted"
+F_PREF="Preferred networks on en0:
+	HomeWifi
+	Liam's iPhone
+	Starbucks"
+run_scan
+check "wifi uses the gateway" "$(row_field Wifi RESULT)" "LOOKS LIKE A HOTSPOT"
+has   "wifi says iPhone" "$(row_field Wifi FOUND)" "iPhone hotspot"
+has   "says Full Disk Access" "$(row_field Switches DETAIL)" "Full Disk Access"
+has   "shows the real error" "$(row_field Switches DETAIL)" "Operation not permitted"
+check "saved from backup" "$(row_field Saved FOUND)" "Liam's iPhone"
+F_PREF="Preferred networks on en0:
+	HomeWifi"
+run_scan
+check "backup with no hotspots is clean" "$(row_field Saved LEVEL)" ok
+F_PREF=""
+run_scan
+check "nothing readable stays unknown" "$(row_field Saved RESULT)" UNKNOWN
 
 echo "13. Name matching"
 for n in "John's iPhone" "Galaxy A54 5G" "AndroidAP_1234" "DIRECT-xy-HP OfficeJet" "DESKTOP-9K2LM4P 7731" "Pixel 8" "moto g54"; do

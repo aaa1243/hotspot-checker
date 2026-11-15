@@ -52,7 +52,16 @@ src_arp()         { arp -an -i "$1" 2>/dev/null; }
 src_leases()      { cat /var/db/dhcpd_leases 2>/dev/null; }
 src_procs()       { ps -axo lstart=,comm= 2>/dev/null; }
 src_wifi_info()   { system_profiler SPAirPortDataType 2>/dev/null; }
-src_known_xml()   { plutil -convert xml1 -o - "$KNOWN_PLIST" 2>/dev/null; }
+src_known_xml()   {
+    # Three ways to turn the binary list into XML, in case one is blocked on this macOS version.
+    local out
+    out="$(plutil -convert xml1 -o - "$KNOWN_PLIST" 2>/dev/null)"
+    [ -z "$out" ] && out="$(/usr/libexec/PlistBuddy -x -c Print "$KNOWN_PLIST" 2>/dev/null)"
+    [ -z "$out" ] && out="$(cat "$KNOWN_PLIST" 2>/dev/null | plutil -convert xml1 -o - - 2>/dev/null)"
+    printf '%s' "$out"
+}
+src_known_error() { cat "$KNOWN_PLIST" 2>&1 >/dev/null | head -1; }
+src_preferred()   { networksetup -listpreferredwirelessnetworks "$1" 2>/dev/null; }
 
 # =============================================================================
 #  HELPERS
@@ -178,6 +187,7 @@ row_field() {  # row_field Gateway RESULT   (used by the tests)
 # =============================================================================
 #  CHECKS
 # =============================================================================
+GW_WIFI_KIND=""
 check_gateway() {
     local display="Where this Mac gets its internet"
     local found="" kinds="" via_pc=0 mac_range=0 gw ifc port k
@@ -192,6 +202,7 @@ check_gateway() {
             *Android*|*RNDIS*|*Tether*)  [ -z "$k" ] && k="a phone over USB" ;;
         esac
         [ -n "$k" ] && kinds="${kinds:+$kinds, }$k"
+        [ -n "$k" ] && [ "$ifc" = "$(wifi_device)" ] && GW_WIFI_KIND="$k"
         case "$gw" in
             192.168.137.*) via_pc=1 ;;
             192.168.2.*)   mac_range=1 ;;
@@ -278,8 +289,13 @@ check_wifi() {
     ssid="$(src_wifi_info | awk '/Current Network Information:/ { getline; sub(/^[ \t]+/, ""); sub(/:[ \t]*$/, ""); print; exit }')"
     case "$ssid" in
         ""|*redacted*|*Redacted*)
-            add_row Wifi "$display" "On Wi-Fi, name hidden by macOS" "UNKNOWN" note \
-                "Newer macOS hides the Wi-Fi name from Terminal. Have them click the Wi-Fi icon in the menu bar so you can read the name. Networks joined since boot are listed further down if this was run with sudo."
+            if [ -n "$GW_WIFI_KIND" ]; then
+                add_row Wifi "$display" "Name hidden by macOS, but the gateway shows $GW_WIFI_KIND" "LOOKS LIKE A HOTSPOT" warn \
+                    "macOS hides the Wi-Fi name from Terminal, but the address this Wi-Fi hands out matches $GW_WIFI_KIND. Have them click the Wi-Fi icon in the menu bar to show the name."
+            else
+                add_row Wifi "$display" "On Wi-Fi, name hidden by macOS" "UNKNOWN" note \
+                    "Newer macOS hides the Wi-Fi name from Terminal. Have them click the Wi-Fi icon in the menu bar so you can read the name."
+            fi
             ;;
         *)
             if is_hotspot_name "$ssid"; then
@@ -299,13 +315,35 @@ check_known() {
     local known joined hot name count=0 names="" hotnames="" last=0 saved="" why="" ago since
     known="$(src_known_xml | parse_known)"
     if [ -z "$known" ]; then
-        if src_is_root; then
-            why="The saved network list could not be read. Terminal may need Full Disk Access (System Settings, Privacy and Security)."
-        else
+        local err dev pref list
+        err="$(src_known_error)"
+        if ! src_is_root; then
             why="Run it with sudo to read this."
+        elif [ -n "$err" ]; then
+            why="macOS blocked reading the saved network list ($err). Give Terminal Full Disk Access in System Settings, Privacy and Security, then run it again."
+        else
+            why="The saved network list could not be read on this macOS version."
         fi
         add_row Switches "$d1" "Could not be read" "UNKNOWN" note "$why"
-        add_row Saved "$d2" "Could not be read" "UNKNOWN" note "$why"
+        # Backup: networksetup still lists saved names (no dates), so saved hotspots can be shown.
+        dev="$(wifi_device)"
+        list=""
+        [ -n "$dev" ] && list="$(src_preferred "$dev" | tail -n +2)"
+        while IFS= read -r pref; do
+            pref="$(printf '%s' "$pref" | sed 's/^[[:space:]]*//')"
+            [ -z "$pref" ] && continue
+            if is_hotspot_name "$pref"; then saved="${saved:+$saved, }$pref"; fi
+        done <<LIST
+$list
+LIST
+        if [ -n "$saved" ]; then
+            add_row Saved "$d2" "$saved" "FOUND" note \
+                "This Mac has joined these before. It shows they have a hotspot available. The full list with dates was blocked, so this comes from the saved names only."
+        elif [ -n "$list" ]; then
+            add_row Saved "$d2" "None (from saved names, no dates)" "OK" ok ""
+        else
+            add_row Saved "$d2" "Could not be read" "UNKNOWN" note "$why"
+        fi
         return
     fi
     while IFS="$(printf '\t')" read -r joined hot name; do
@@ -351,7 +389,7 @@ EOF
 }
 
 run_scan() {
-    R_NAME=(); R_DISPLAY=(); R_FOUND=(); R_RESULT=(); R_LEVEL=(); R_DETAIL=(); EVENTS=""
+    R_NAME=(); R_DISPLAY=(); R_FOUND=(); R_RESULT=(); R_LEVEL=(); R_DETAIL=(); EVENTS=""; GW_WIFI_KIND=""
     SCAN_NOW="$(src_now)"
     SCAN_BOOT="$(src_boot)"
     [ -z "$SCAN_BOOT" ] && SCAN_BOOT=0
